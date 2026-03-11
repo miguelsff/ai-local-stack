@@ -1,0 +1,444 @@
+services:
+  # ─── Data Layer ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: infra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  redis:
+    image: redis:7-alpine
+    container_name: infra-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+
+  minio:
+    image: minio/minio
+    container_name: infra-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio.rule=Host(`minio.local`)"
+      - "traefik.http.routers.minio.entrypoints=web"
+      - "traefik.http.services.minio.loadbalancer.server.port=9001"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  minio-init:
+    image: minio/mc
+    container_name: infra-minio-init
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://infra-minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+      mc mb --ignore-existing local/mlflow-artifacts &&
+      mc mb --ignore-existing local/datasets &&
+      mc mb --ignore-existing local/agent-artifacts &&
+      echo 'MinIO buckets initialized.'
+      "
+    networks:
+      - shared-infra
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  # ─── Vector / ML ────────────────────────────────────────────────────────────
+  chromadb:
+    image: chromadb/chroma
+    container_name: infra-chromadb
+    restart: unless-stopped
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+      CHROMA_SERVER_HOST: "0.0.0.0"
+    volumes:
+      - chromadb-data:/data
+    ports:
+      - "8000:8000"
+    networks:
+      - shared-infra
+    # Note: chromadb/chroma is a distroless image (no curl/wget/sh)
+    # Dependents use service_started.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chroma.rule=Host(`chroma.local`)"
+      - "traefik.http.routers.chroma.entrypoints=web"
+      - "traefik.http.services.chroma.loadbalancer.server.port=8000"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.10.1-full
+    container_name: infra-mlflow
+    restart: unless-stopped
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@infra-postgres:5432/mlflow_db
+      --default-artifact-root s3://mlflow-artifacts
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://infra-minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - mlflow-data:/mlflow
+    ports:
+      - "5000:5000"
+    networks:
+      - shared-infra
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\""]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mlflow.rule=Host(`mlflow.local`)"
+      - "traefik.http.routers.mlflow.entrypoints=web"
+      - "traefik.http.services.mlflow.loadbalancer.server.port=5000"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: infra-litellm
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--detailed_debug"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    ports:
+      - "4000:4000"
+    networks:
+      - shared-infra
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.llm.rule=Host(`llm.local`)"
+      - "traefik.http.routers.llm.entrypoints=web"
+      - "traefik.http.services.llm.loadbalancer.server.port=4000"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ─── Observability ──────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki
+    container_name: infra-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - shared-infra
+    # Note: grafana/loki is a distroless image (no curl/wget/sh)
+    # so healthcheck is not possible. Dependents use service_started.
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+
+  promtail:
+    image: grafana/promtail
+    container_name: infra-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - //var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-data:/tmp/promtail
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+    networks:
+      - shared-infra
+    depends_on:
+      loki:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  prometheus:
+    image: prom/prometheus
+    container_name: infra-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.local`)"
+      - "traefik.http.routers.prometheus.entrypoints=web"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  grafana:
+    image: grafana/grafana
+    container_name: infra-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - shared-infra
+    depends_on:
+      loki:
+        condition: service_started
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.local`)"
+      - "traefik.http.routers.grafana.entrypoints=web"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ─── Admin UIs ──────────────────────────────────────────────────────────────
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: infra-redisinsight
+    restart: unless-stopped
+    volumes:
+      - redisinsight-data:/data
+    ports:
+      - "5540:5540"
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const h=require('http');h.get('http://localhost:5540/api/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.redis.rule=Host(`redis.local`)"
+      - "traefik.http.routers.redis.entrypoints=web"
+      - "traefik.http.services.redis.loadbalancer.server.port=5540"
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  chromadb-admin:
+    build:
+      context: ./chromadb-admin/build
+      dockerfile: ../Dockerfile
+    image: local/chromadb-admin
+    container_name: infra-chromadb-admin
+    restart: unless-stopped
+    environment:
+      CHROMADB_HOST: infra-chromadb
+      CHROMADB_PORT: 8000
+    ports:
+      - "3010:3001"
+    networks:
+      - shared-infra
+    depends_on:
+      chromadb:
+        condition: service_started
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chromadb-admin.rule=Host(`chromadb-admin.local`)"
+      - "traefik.http.routers.chromadb-admin.entrypoints=web"
+      - "traefik.http.services.chromadb-admin.loadbalancer.server.port=3001"
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  # ─── Reverse Proxy / Management ─────────────────────────────────────────────
+  traefik:
+    image: traefik:v3
+    container_name: infra-traefik
+    restart: unless-stopped
+    command:
+      - --api.insecure=true
+      - --api.dashboard=true
+      - --ping=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=shared-infra
+      - --entrypoints.web.address=:80
+      - --log.level=INFO
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "80:80"
+      - "8080:8080"
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ping || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  portainer:
+    image: portainer/portainer-ce
+    container_name: infra-portainer
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - portainer-data:/data
+    ports:
+      - "9443:9443"
+    networks:
+      - shared-infra
+    # Note: portainer-ce is distroless (no curl/wget/sh for healthcheck)
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.local`)"
+      - "traefik.http.routers.portainer.entrypoints=web"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9443"
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+# ─── Networks ───────────────────────────────────────────────────────────────
+networks:
+  shared-infra:
+    name: shared-infra
+    driver: bridge
+
+# ─── Volumes ────────────────────────────────────────────────────────────────
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  chromadb-data:
+  mlflow-data:
+  grafana-data:
+  loki-data:
+  promtail-data:
+  redisinsight-data:
+  portainer-data:

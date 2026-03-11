@@ -1,0 +1,49 @@
+model_list:
+  # ── Ollama local models (requires Ollama running on host) ──────────────────
+  - model_name: qwen3:4b
+    litellm_params:
+      model: ollama/qwen3:4b
+      api_base: http://host.docker.internal:11434
+
+  - model_name: llama3.2:3b
+    litellm_params:
+      model: ollama/llama3.2:3b
+      api_base: http://host.docker.internal:11434
+
+  - model_name: nomic-embed-text
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://host.docker.internal:11434
+
+  # ── OpenAI ─────────────────────────────────────────────────────────────────
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ── Anthropic ──────────────────────────────────────────────────────────────
+  - model_name: claude-sonnet-4
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  cache: true
+  cache_params:
+    type: redis
+    host: infra-redis
+    port: 6379
+    password: os.environ/REDIS_PASSWORD
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

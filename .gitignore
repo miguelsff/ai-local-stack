@@ -1,0 +1,32 @@
+# Environment secrets
+.env
+
+# Cloned build dirs
+chromadb-admin/build/
+
+# Data directories
+data/
+logs/
+**/data/
+*.log
+
+# Docker volumes (if bind-mounted locally)
+postgres-data/
+redis-data/
+minio-data/
+chromadb-data/
+mlflow-data/
+grafana-data/
+loki-data/
+promtail-data/
+portainer-data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
