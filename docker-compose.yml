@@ -179,7 +179,8 @@ services:
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--detailed_debug"]
     environment:
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_ADMIN_PASS: ${LITELLM_ADMIN_PASS}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@infra-postgres:5432/litellm_db
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -191,6 +192,8 @@ services:
       - shared-infra
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]

@@ -46,4 +46,4 @@ litellm_settings:
     password: os.environ/REDIS_PASSWORD
 
 general_settings:
-  master_key: os.environ/LITELLM_MASTER_KEY
+  master_key: os.environ/LITELLM_ADMIN_PASS

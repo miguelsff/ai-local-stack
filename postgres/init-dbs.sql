@@ -1,6 +1,7 @@
 -- Create additional databases for the stack
 CREATE DATABASE mlflow_db;
 CREATE DATABASE agents_db;
+CREATE DATABASE litellm_db;
 
 -- Initialize agents_db with useful extensions
 \c agents_db
