@@ -12,7 +12,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql:ro
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT}:5432"
     networks:
       - shared-infra
     healthcheck:
@@ -38,7 +38,7 @@ services:
     volumes:
       - redis-data:/data
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT}:6379"
     networks:
       - shared-infra
     healthcheck:
@@ -63,7 +63,7 @@ services:
     volumes:
       - mongodb-data:/data/db
     ports:
-      - "27017:27017"
+      - "${MONGODB_PORT}:27017"
     networks:
       - shared-infra
     healthcheck:
@@ -89,7 +89,7 @@ services:
       ME_CONFIG_MONGODB_SERVER: infra-mongodb
       ME_CONFIG_BASICAUTH: "false"
     ports:
-      - "8081:8081"
+      - "${MONGO_EXPRESS_PORT}:8081"
     networks:
       - shared-infra
     depends_on:
@@ -122,8 +122,8 @@ services:
     volumes:
       - minio-data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
     networks:
       - shared-infra
     healthcheck:
@@ -176,7 +176,7 @@ services:
     volumes:
       - chromadb-data:/data
     ports:
-      - "8000:8000"
+      - "${CHROMADB_PORT}:8000"
     networks:
       - shared-infra
     # Note: chromadb/chroma is a distroless image (no curl/wget/sh)
@@ -208,7 +208,7 @@ services:
     volumes:
       - mlflow-data:/mlflow
     ports:
-      - "5000:5000"
+      - "${MLFLOW_PORT}:5000"
     networks:
       - shared-infra
     depends_on:
@@ -246,7 +246,7 @@ services:
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     ports:
-      - "4000:4000"
+      - "${LITELLM_PORT}:4000"
     networks:
       - shared-infra
     depends_on:
@@ -272,7 +272,7 @@ services:
 
   # ─── Observability ──────────────────────────────────────────────────────────
   loki:
-    image: grafana/loki
+    image: grafana/loki:3.4.2
     container_name: infra-loki
     restart: unless-stopped
     command: -config.file=/etc/loki/local-config.yaml
@@ -280,7 +280,7 @@ services:
       - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
     ports:
-      - "3100:3100"
+      - "${LOKI_PORT}:3100"
     networks:
       - shared-infra
     # Note: grafana/loki is a distroless image (no curl/wget/sh)
@@ -310,6 +310,60 @@ services:
         limits:
           memory: 64m
 
+  tempo:
+    image: grafana/tempo:2.7.2
+    container_name: infra-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/config.yml"]
+    volumes:
+      - ./tempo/tempo-config.yml:/etc/tempo/config.yml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "${TEMPO_PORT}:3200"
+    networks:
+      - shared-infra
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tempo.rule=Host(`tempo.local`)"
+      - "traefik.http.routers.tempo.entrypoints=web"
+      - "traefik.http.services.tempo.loadbalancer.server.port=3200"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib
+    container_name: infra-otel-collector
+    restart: unless-stopped
+    command: ["--config", "/etc/otelcol/config.yml"]
+    volumes:
+      - ./otel-collector/otel-collector-config.yml:/etc/otelcol/config.yml:ro
+    ports:
+      - "${OTEL_GRPC_PORT}:4317"
+      - "${OTEL_HTTP_PORT}:4318"
+      - "${OTEL_METRICS_PORT}:8889"
+    networks:
+      - shared-infra
+    depends_on:
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_healthy
+    # Note: otel-collector-contrib is a distroless image (no curl/wget/sh)
+    labels:
+      - "traefik.enable=false"
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
   prometheus:
     image: prom/prometheus
     container_name: infra-prometheus
@@ -320,10 +374,12 @@ services:
       - --storage.tsdb.retention.time=15d
       - --storage.tsdb.retention.size=2GB
       - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT}:9090"
     networks:
       - shared-infra
     healthcheck:
@@ -354,13 +410,15 @@ services:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT}:3000"
     networks:
       - shared-infra
     depends_on:
       loki:
         condition: service_started
       prometheus:
+        condition: service_healthy
+      tempo:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
@@ -386,7 +444,7 @@ services:
     volumes:
       - redisinsight-data:/data
     ports:
-      - "5540:5540"
+      - "${REDISINSIGHT_PORT}:5540"
     networks:
       - shared-infra
     healthcheck:
@@ -416,7 +474,7 @@ services:
       CHROMADB_HOST: infra-chromadb
       CHROMADB_PORT: 8000
     ports:
-      - "3010:3001"
+      - "${CHROMADB_ADMIN_PORT}:3001"
     networks:
       - shared-infra
     depends_on:
@@ -449,8 +507,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
-      - "80:80"
-      - "8080:8080"
+      - "${TRAEFIK_HTTP_PORT}:80"
+      - "${TRAEFIK_DASHBOARD_PORT}:8080"
     networks:
       - shared-infra
     healthcheck:
@@ -472,7 +530,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - portainer-data:/data
     ports:
-      - "9443:9443"
+      - "${PORTAINER_PORT}:9443"
     networks:
       - shared-infra
     # Note: portainer-ce is distroless (no curl/wget/sh for healthcheck)
@@ -504,4 +562,5 @@ volumes:
   promtail-data:
   redisinsight-data:
   mongodb-data:
+  tempo-data:
   portainer-data:

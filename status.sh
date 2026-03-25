@@ -7,6 +7,15 @@ BOLD='\033[1m'; NC='\033[0m'
 TIMEOUT=3
 EXIT_CODE=0
 
+# ── Load .env ────────────────────────────────────────────────────────────────
+if [[ -f .env ]]; then
+  # shellcheck disable=SC1091
+  source .env
+else
+  echo -e "${RED}[ERROR]${NC} .env not found. Run setup.sh first."
+  exit 1
+fi
+
 # ── Check HTTP endpoint ───────────────────────────────────────────────────────
 check_http() {
   local url="$1"
@@ -45,25 +54,25 @@ echo "────────────────────────�
 printf "  %-22s %-10s %s\n" "SERVICE" "STATUS" "URL"
 echo "  ──────────────────────────────────────────────────────────────────"
 
-declare -A SERVICES=(
-  ["MLflow"]="http://localhost:5000/health|http://localhost:5000"
-  ["MinIO"]="http://localhost:9000/minio/health/live|http://localhost:9001"
-  ["ChromaDB"]="http://localhost:8000/api/v2/heartbeat|http://localhost:8000"
-  ["LiteLLM"]="http://localhost:4000/health/liveliness|http://localhost:4000"
-  ["Grafana"]="http://localhost:3000/api/health|http://localhost:3000"
-  ["Prometheus"]="http://localhost:9090/-/healthy|http://localhost:9090"
-  ["Loki"]="http://localhost:3100/ready|http://localhost:3100"
-  ["RedisInsight"]="http://localhost:5540/api/health|http://localhost:5540"
-  ["ChromaDB-Admin"]="http://localhost:3010|http://localhost:3010"
-  ["Mongo-Express"]="http://localhost:8081|http://localhost:8081"
-  ["Traefik"]="http://localhost:8080/api/rawdata|http://localhost:8080"
+# HTTP health checks: name|health_url|display_url
+HTTP_CHECKS=(
+  "MLflow|http://localhost:${MLFLOW_PORT}/health|http://localhost:${MLFLOW_PORT}"
+  "MinIO|http://localhost:${MINIO_API_PORT}/minio/health/live|http://localhost:${MINIO_CONSOLE_PORT}"
+  "ChromaDB|http://localhost:${CHROMADB_PORT}/api/v2/heartbeat|http://localhost:${CHROMADB_PORT}"
+  "LiteLLM|http://localhost:${LITELLM_PORT}/health/liveliness|http://localhost:${LITELLM_PORT}"
+  "Grafana|http://localhost:${GRAFANA_PORT}/api/health|http://localhost:${GRAFANA_PORT}"
+  "Prometheus|http://localhost:${PROMETHEUS_PORT}/-/healthy|http://localhost:${PROMETHEUS_PORT}"
+  "Loki|http://localhost:${LOKI_PORT}/ready|http://localhost:${LOKI_PORT}"
+  "Tempo|http://localhost:${TEMPO_PORT}/ready|http://localhost:${TEMPO_PORT}"
+  "OTel-Collector|http://localhost:${OTEL_METRICS_PORT}/metrics|grpc://localhost:${OTEL_GRPC_PORT}"
+  "RedisInsight|http://localhost:${REDISINSIGHT_PORT}/api/health|http://localhost:${REDISINSIGHT_PORT}"
+  "ChromaDB-Admin|http://localhost:${CHROMADB_ADMIN_PORT}|http://localhost:${CHROMADB_ADMIN_PORT}"
+  "Mongo-Express|http://localhost:${MONGO_EXPRESS_PORT}|http://localhost:${MONGO_EXPRESS_PORT}"
+  "Traefik|http://localhost:${TRAEFIK_DASHBOARD_PORT}/api/rawdata|http://localhost:${TRAEFIK_DASHBOARD_PORT}"
 )
 
-# Ordered list for consistent output
-ORDERED=(MLflow MinIO ChromaDB ChromaDB-Admin LiteLLM Grafana Prometheus Loki RedisInsight Mongo-Express Traefik)
-
-for svc in "${ORDERED[@]}"; do
-  IFS='|' read -r health_url display_url <<< "${SERVICES[$svc]}"
+for entry in "${HTTP_CHECKS[@]}"; do
+  IFS='|' read -r svc health_url display_url <<< "$entry"
   if check_http "$health_url"; then
     row "$svc" "healthy" "$display_url"
   else
@@ -72,31 +81,31 @@ for svc in "${ORDERED[@]}"; do
 done
 
 # Portainer (HTTPS)
-if check_https "https://localhost:9443/api/system/status"; then
-  row "Portainer" "healthy" "https://localhost:9443"
+if check_https "https://localhost:${PORTAINER_PORT}/api/system/status"; then
+  row "Portainer" "healthy" "https://localhost:${PORTAINER_PORT}"
 else
-  row "Portainer" "unreachable" "https://localhost:9443"
+  row "Portainer" "unreachable" "https://localhost:${PORTAINER_PORT}"
 fi
 
 # PostgreSQL (TCP check)
-if timeout "$TIMEOUT" bash -c "echo > /dev/tcp/localhost/5432" 2>/dev/null; then
-  row "PostgreSQL" "healthy" "postgresql://localhost:5432"
+if (echo > /dev/tcp/localhost/${POSTGRES_PORT}) 2>/dev/null; then
+  row "PostgreSQL" "healthy" "postgresql://localhost:${POSTGRES_PORT}"
 else
-  row "PostgreSQL" "unreachable" "postgresql://localhost:5432"
+  row "PostgreSQL" "unreachable" "postgresql://localhost:${POSTGRES_PORT}"
 fi
 
 # Redis (TCP check)
-if timeout "$TIMEOUT" bash -c "echo > /dev/tcp/localhost/6379" 2>/dev/null; then
-  row "Redis" "healthy" "redis://localhost:6379"
+if (echo > /dev/tcp/localhost/${REDIS_PORT}) 2>/dev/null; then
+  row "Redis" "healthy" "redis://localhost:${REDIS_PORT}"
 else
-  row "Redis" "unreachable" "redis://localhost:6379"
+  row "Redis" "unreachable" "redis://localhost:${REDIS_PORT}"
 fi
 
 # MongoDB (TCP check)
-if timeout "$TIMEOUT" bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
-  row "MongoDB" "healthy" "mongodb://localhost:27017"
+if (echo > /dev/tcp/localhost/${MONGODB_PORT}) 2>/dev/null; then
+  row "MongoDB" "healthy" "mongodb://localhost:${MONGODB_PORT}"
 else
-  row "MongoDB" "unreachable" "mongodb://localhost:27017"
+  row "MongoDB" "unreachable" "mongodb://localhost:${MONGODB_PORT}"
 fi
 
 echo ""

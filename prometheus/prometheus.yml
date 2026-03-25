@@ -21,6 +21,10 @@ scrape_configs:
       - targets: [infra-minio:9000]
     metrics_path: /minio/v2/metrics/cluster
 
+  - job_name: otel-collector
+    static_configs:
+      - targets: [infra-otel-collector:8889]
+
   # Optional: Redis metrics require a redis_exporter sidecar.
   # Uncomment and add redis_exporter service to docker-compose.yml if needed.
   # - job_name: redis
