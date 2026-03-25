@@ -55,11 +55,12 @@ declare -A SERVICES=(
   ["Loki"]="http://localhost:3100/ready|http://localhost:3100"
   ["RedisInsight"]="http://localhost:5540/api/health|http://localhost:5540"
   ["ChromaDB-Admin"]="http://localhost:3010|http://localhost:3010"
+  ["Mongo-Express"]="http://localhost:8081|http://localhost:8081"
   ["Traefik"]="http://localhost:8080/api/rawdata|http://localhost:8080"
 )
 
 # Ordered list for consistent output
-ORDERED=(MLflow MinIO ChromaDB ChromaDB-Admin LiteLLM Grafana Prometheus Loki RedisInsight Traefik)
+ORDERED=(MLflow MinIO ChromaDB ChromaDB-Admin LiteLLM Grafana Prometheus Loki RedisInsight Mongo-Express Traefik)
 
 for svc in "${ORDERED[@]}"; do
   IFS='|' read -r health_url display_url <<< "${SERVICES[$svc]}"
@@ -89,6 +90,13 @@ if timeout "$TIMEOUT" bash -c "echo > /dev/tcp/localhost/6379" 2>/dev/null; then
   row "Redis" "healthy" "redis://localhost:6379"
 else
   row "Redis" "unreachable" "redis://localhost:6379"
+fi
+
+# MongoDB (TCP check)
+if timeout "$TIMEOUT" bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
+  row "MongoDB" "healthy" "mongodb://localhost:27017"
+else
+  row "MongoDB" "unreachable" "mongodb://localhost:27017"
 fi
 
 echo ""

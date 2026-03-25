@@ -2,7 +2,7 @@
 Infraestructura compartida Docker Compose para proyectos GenAI/MLOps
 
 ## Stack
-Docker Compose, PostgreSQL 16, Redis 7, MinIO, ChromaDB, MLflow, LiteLLM, Prometheus, Grafana, Loki, Promtail, Traefik v3, Portainer, RedisInsight, chromadb-admin
+Docker Compose, PostgreSQL 16, MongoDB 7, Redis 7, MinIO, ChromaDB, MLflow, LiteLLM, Prometheus, Grafana, Loki, Promtail, Traefik v3, Portainer, RedisInsight, chromadb-admin, mongo-express
 
 ## Commands
 docker compose up -d

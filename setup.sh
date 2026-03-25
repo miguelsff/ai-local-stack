@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOSTS_ENTRY="127.0.0.1 mlflow.local minio.local grafana.local prometheus.local chroma.local llm.local redis.local chromadb-admin.local portainer.local"
+HOSTS_ENTRY="127.0.0.1 mlflow.local minio.local grafana.local prometheus.local chroma.local llm.local redis.local chromadb-admin.local portainer.local mongo.local"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -108,6 +108,8 @@ echo "║  Prometheus       │ 9090  │ http://localhost:9090                 
 echo "║  RedisInsight     │ 5540  │ http://localhost:5540                   ║"
 echo "║  Traefik Dashboard│ 8080  │ http://localhost:8080                   ║"
 echo "║  Portainer        │ 9443  │ https://localhost:9443                  ║"
+echo "║  MongoDB          │27017  │ mongodb://localhost:27017               ║"
+echo "║  Mongo Express    │ 8081  │ http://localhost:8081                   ║"
 echo "║  PostgreSQL       │ 5432  │ postgresql://localhost:5432             ║"
 echo "║  Redis            │ 6379  │ redis://localhost:6379                  ║"
 echo "╚══════════════════════════════════════════════════════════════════════╝"
